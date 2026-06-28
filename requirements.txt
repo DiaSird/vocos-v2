@@ -1,0 +1,18 @@
+--index-url https://download.pytorch.org/whl/cu128
+
+PyYAML
+triton
+torch
+torchaudio
+torchvision
+# torchcodec  # deps-torchaudio
+jsonargparse[signatures]
+lightning
+soundfile
+torchmetrics[audio]
+
+# optional
+mlflow  
+onnx
+onnxscript
+onnxruntime
