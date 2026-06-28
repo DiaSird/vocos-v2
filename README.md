@@ -2,8 +2,16 @@
 
 - ConvMeXtLayer-v2
 
-## Training
+## Quick Start
+
+- Training
 
 ```bash
-python src/train.py fit --config config_audio.yaml
+python src/train.py fit --config configs/config_template.yaml
+```
+
+- Inference
+ 
+```
+python src/inference.py --model last.pt --input sample.wav
 ```

@@ -7,8 +7,8 @@ import lightning as L
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality
 
-from src.discriminator import Discriminator
 from src.model import Vocos
+from src.discriminator import Discriminator
 
 
 # -------------------------
@@ -48,6 +48,10 @@ class AudioPLModule(L.LightningModule):
         super().__init__()
         self.save_hyperparameters(ignore=["generator", "discriminator"])
 
+        self.sample_rate = sample_rate
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.win_length = win_length
         self.lr = lr
         self.betas = betas
         self.weight_decay = weight_decay
@@ -72,7 +76,6 @@ class AudioPLModule(L.LightningModule):
 
         # Hann window registered as buffer so it moves with the model to CUDA
         self.register_buffer("window", torch.hann_window(win_length))
-
         self.pesq_metric = PerceptualEvaluationSpeechQuality(fs=16000, mode="wb")
 
     # -------------------------
@@ -100,15 +103,19 @@ class AudioPLModule(L.LightningModule):
 
     def _pesq(self, wav1: torch.Tensor, wav2: torch.Tensor) -> torch.Tensor:
         """Compute PESQ score between two waveforms [B, T] or [B, 1, T]"""
-        if wav1.dim() == 3:
-            wav1 = wav1.squeeze(1)
-        if wav2.dim() == 3:
-            wav2 = wav2.squeeze(1)
+        try:
+            if wav1.dim() == 3:
+                wav1 = wav1.squeeze(1)
+            if wav2.dim() == 3:
+                wav2 = wav2.squeeze(1)
 
-        wav1 = torchaudio.functional.resample(wav1, self.sample_rate, 16000)
-        wav2 = torchaudio.functional.resample(wav2, self.sample_rate, 16000)
+            wav1 = torchaudio.functional.resample(wav1, self.sample_rate, 16000)
+            wav2 = torchaudio.functional.resample(wav2, self.sample_rate, 16000)
 
-        return self.pesq_metric(wav1, wav2)
+            return self.pesq_metric(wav1, wav2)
+
+        except Exception:
+            return torch.tensor(0.0, device=wav1.device)
 
     # -------------------------
     # Optimizers
@@ -187,6 +194,7 @@ class AudioPLModule(L.LightningModule):
         t = min(mel.shape[-1], mel_fake.shape[-1])
         loss_mel = F.l1_loss(mel[..., :t], mel_fake[..., :t])
 
+        # total generator loss
         loss_g = (
             self.lambda_adv * loss_adv
             + self.lambda_feat * loss_feat
@@ -224,17 +232,24 @@ class AudioPLModule(L.LightningModule):
         mel, wav = batch
         wav_len = wav.shape[-1]
 
+        # generator: mel -> complex STFT -> waveform
         re, im = self.model(mel)
         wav_fake = self._istft(re, im, length=wav_len)
         wav_fake_3d = wav_fake.unsqueeze(1)
 
-        mel_fake = self._mel(wav_fake)
-        t = min(mel.shape[-1], mel_fake.shape[-1])
-        val_mel = F.l1_loss(mel[..., :t], mel_fake[..., :t])
+        # discriminator outputs
+        r_out, f_out, fmap_r, fmap_f = self.disc(wav, wav_fake_3d)
 
-        _, f_out, fmap_r, fmap_f = self.disc(wav, wav_fake_3d)
+        val_d = sum(
+            d_hinge_loss(r, f)
+            for r_list, f_list in zip(r_out, f_out)
+            for r, f in zip(r_list, f_list)
+        )
 
+        # adversarial loss
         val_adv = sum(g_hinge_loss(f) for f_list in f_out for f in f_list)
+
+        # feature matching loss
         val_feat = sum(
             F.l1_loss(r.detach(), f)
             for disc_r, disc_f in zip(fmap_r, fmap_f)
@@ -242,15 +257,32 @@ class AudioPLModule(L.LightningModule):
             for r, f in zip(sub_r, sub_f)
         )
 
+        # mel reconstruction: L1 on log-mel (Lmel in paper)
+        mel_fake = self._mel(wav_fake)
+        t = min(mel.shape[-1], mel_fake.shape[-1])
+        val_mel = F.l1_loss(mel[..., :t], mel_fake[..., :t])
+
+        # total generator loss
+        val_g = (
+            self.lambda_adv * val_adv
+            + self.lambda_feat * val_feat
+            + self.lambda_mel * val_mel
+        )
+
         val_pesq = self._pesq(wav_fake, wav)
 
         self.log_dict(
             {
-                "val/loss_mel": val_mel,
+                "val/loss_g": val_g,
+                "val/loss_d": val_d,
                 "val/loss_adv": val_adv,
                 "val/loss_feat": val_feat,
+                "val/loss_mel": val_mel,
                 "val/pesq": val_pesq,
             },
-            on_epoch=True,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=False,
         )
+
         return val_mel

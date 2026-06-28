@@ -39,8 +39,16 @@ model:
   grad_clip: 1.0
 
 trainer:
-  max_steps: 200000
+  max_steps: 200000 # 2000000
   precision: 16-mixed
   log_every_n_steps: 10
   check_val_every_n_epoch: null
   val_check_interval: 10000
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: checkpoints/
+        filename: last # step-{step}
+        every_n_train_steps: 1000
+        save_top_k: -1
+        save_on_train_epoch_end: false

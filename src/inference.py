@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 
+import soundfile as sf
 import torch
 import torchaudio
 from pesq import pesq
@@ -57,7 +58,9 @@ def load_model(path, device):
 
 # Load and normalize waveform
 def load_audio(path, target_sr):
-    wav, sr = torchaudio.load(path)
+    wav, sr = sf.read(path, dtype="float32")  # [T]
+    wav = torch.from_numpy(wav).unsqueeze(0)  # [1, T]
+    # wav, sr = torchaudio.load(path)
 
     if sr != target_sr:
         wav = torchaudio.functional.resample(wav, sr, target_sr)
@@ -138,7 +141,7 @@ def main():
         total += score
 
         out_path = os.path.join(cfg.out, os.path.basename(f).replace(".", "_recon."))
-        torchaudio.save(out_path, out.unsqueeze(0).cpu(), cfg.sr)
+        sf.write(out_path, out.unsqueeze(0).cpu().numpy(), cfg.sr)
 
         print(f"{f}: PESQ={score:.4f}")
 
