@@ -1,5 +1,7 @@
 configs/config.yaml
 
+results/
+tests/
 lightning_logs/
 */__pycache__/*
 *.pyc

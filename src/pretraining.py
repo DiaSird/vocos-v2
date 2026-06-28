@@ -286,3 +286,21 @@ class AudioPLModule(L.LightningModule):
         )
 
         return val_mel
+
+    def on_train_start(self):
+        self.best_metric = float("inf")
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        # debug
+        # if self.global_step % 10 == 0:
+        #     torch.save(self.model.state_dict(), f"checkpoints/vocos_v2.pt")
+        pass
+
+    def on_validation_epoch_end(self):
+        val_pesq = self.trainer.callback_metrics.get("val/pesq")
+        if val_pesq is None:
+            return
+
+        if val_pesq < self.best_metric:
+            self.best_metric = val_pesq
+            torch.save(self.model.state_dict(), "checkpoints/vocos_best.pt")

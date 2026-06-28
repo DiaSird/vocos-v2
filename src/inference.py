@@ -5,11 +5,11 @@ import sys
 import soundfile as sf
 import torch
 import torchaudio
-from pesq import pesq
-from torch.package import PackageImporter
+from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.model import Vocos
+from src.pretraining import AudioPLModule
 
 
 # Find audio files from file or directory
@@ -29,31 +29,23 @@ def find_audio_files(path):
 
 
 # Load Vocos model from checkpoint
-def load_model(path, device):
-    if path.endswith(".pt"):
-        try:
-            m = PackageImporter(path).load_pickle("", "Vocos")
-            return m.to(device).eval()
-        except Exception:
-            pass
-
+def load_model(path, device, config):
     ckpt = torch.load(path, map_location=device)
 
-    if isinstance(ckpt, torch.nn.Module):
-        return ckpt.to(device).eval()
+    # Case 1: full Lightning checkpoint
+    if isinstance(ckpt, dict) and "state_dict" in ckpt:
+        state = ckpt["state_dict"]
 
-    if isinstance(ckpt, dict):
-        if "model" in ckpt and isinstance(ckpt["model"], torch.nn.Module):
-            return ckpt["model"].to(device).eval()
+        # detect LightningModule (AudioPLModule)
+        is_lightning = any("model." in k or "disc." in k for k in state.keys())
+        if is_lightning:
+            pl_model = AudioPLModule.load_from_checkpoint(path, map_location=device)
+            return pl_model.model.to(device).eval()
 
-        state = ckpt.get("state_dict", ckpt)
-        state = {k.replace("model.", ""): v for k, v in state.items()}
-
-        model = Vocos()
-        model.load_state_dict(state)
-        return model.to(device).eval()
-
-    raise ValueError("Unsupported checkpoint format")
+    # Case 2: plain Vocos state_dict
+    model = Vocos(**config)
+    model.load_state_dict(ckpt, strict=True)
+    return model.to(device).eval()
 
 
 # Load and normalize waveform
@@ -70,8 +62,9 @@ def load_audio(path, target_sr):
 
 
 # ISTFT from real/imag
-def istft(re, im, cfg, window, length):
+def istft(re, im, cfg, window, length, device):
     spec = torch.complex(re, im)
+    window = window.to(device)
     return torch.istft(
         spec,
         n_fft=cfg.n_fft,
@@ -83,14 +76,23 @@ def istft(re, im, cfg, window, length):
 
 
 # PESQ computation
-def pesq_score(ref, deg, sr):
-    ref = ref.cpu().numpy().astype("float32")
-    deg = deg.cpu().numpy().astype("float32")
+def pesq_score(self, wav1: torch.Tensor, wav2: torch.Tensor) -> torch.Tensor:
+    """Compute PESQ score between two waveforms [B, T] or [B, 1, T]"""
+    pesq_metric = PerceptualEvaluationSpeechQuality(fs=16000, mode="wb")
 
-    l = min(ref.shape[-1], deg.shape[-1])
-    mode = "wb" if sr >= 16000 else "nb"
+    try:
+        if wav1.dim() == 3:
+            wav1 = wav1.squeeze(1)
+        if wav2.dim() == 3:
+            wav2 = wav2.squeeze(1)
 
-    return pesq(sr, ref[..., :l], deg[..., :l], mode)
+        wav1 = torchaudio.functional.resample(wav1, self.sample_rate, 16000)
+        wav2 = torchaudio.functional.resample(wav2, self.sample_rate, 16000)
+
+        return pesq_metric(wav1, wav2)
+
+    except Exception:
+        return torch.tensor(0.0, device=wav1.device)
 
 
 def main():
@@ -114,12 +116,26 @@ def main():
     os.makedirs(cfg.out, exist_ok=True)
     device = torch.device(cfg.device)
 
-    model = load_model(cfg.model, device)
+    vocos_config = {
+        "in_channels": cfg.n_mels,
+        "channels": 512,
+        "hidden_channels": 1536,
+        "out_channels": cfg.n_fft + 2,  # 2*(n_fft//2+1)
+        "num_layers": 8,
+    }
+
+    model = load_model(cfg.model, device, vocos_config)
 
     # Mel spectrogram extractor
-    mel = torchaudio.transforms.MelSpectrogram(
-        cfg.sr, cfg.n_fft, cfg.hop, cfg.win, cfg.n_mels, cfg.fmin, cfg.fmax
-    )
+    to_mel = torchaudio.transforms.MelSpectrogram(
+        sample_rate=cfg.sr,
+        n_fft=cfg.n_fft,
+        hop_length=cfg.hop,
+        win_length=cfg.win,
+        n_mels=cfg.n_mels,
+        f_min=cfg.fmin,
+        f_max=cfg.fmax,
+    ).to(device)
 
     window = torch.hann_window(cfg.win, device=device)
 
@@ -130,20 +146,21 @@ def main():
         wav = load_audio(f, cfg.sr).to(device)
         ref = wav.squeeze(0)
 
-        # Forward pass
-        m = mel(wav).unsqueeze(0).to(device)
+        mel = to_mel(wav).to(device)
 
-        with torch.inference_mode():
-            re, im = model(m)
-            out = istft(re, im, cfg, window, wav.shape[-1]).squeeze(0)
+        # Inference
+        with torch.no_grad():
+            re, im = model(mel)
+            out = istft(re, im, cfg, window, wav.shape[-1], device).squeeze(0)
+
+        print(f"Input: {f}, Ref shape: {ref.shape}, Out shape: {out.shape}")
 
         score = pesq_score(ref, out.cpu(), cfg.sr)
         total += score
+        print(f"{f}: PESQ={score:.4f}")
 
         out_path = os.path.join(cfg.out, os.path.basename(f).replace(".", "_recon."))
-        sf.write(out_path, out.unsqueeze(0).cpu().numpy(), cfg.sr)
-
-        print(f"{f}: PESQ={score:.4f}")
+        sf.write(out_path, out.cpu().numpy(), cfg.sr)
 
     print(f"Avg PESQ: {total / len(files):.4f}")
 

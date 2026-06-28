@@ -45,10 +45,21 @@ trainer:
   check_val_every_n_epoch: null
   val_check_interval: 10000
   callbacks:
+    # Best model
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
         dirpath: checkpoints/
-        filename: last # step-{step}
-        every_n_train_steps: 1000
-        save_top_k: -1
+        filename: best
+        monitor: train/pesq
+        mode: min
+        save_top_k: 1
+        save_on_train_epoch_end: true
+
+    # Last model
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: checkpoints/
+        filename: last
+        save_top_k: 1
+        every_n_train_steps: 10000
         save_on_train_epoch_end: false
