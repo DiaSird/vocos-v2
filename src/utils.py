@@ -100,7 +100,7 @@ def istft(re, im, cfg, window, length, device):
 
 
 # PESQ computation
-def pesq_score(self, wav1: torch.Tensor, wav2: torch.Tensor) -> torch.Tensor:
+def pesq_score(wav1: torch.Tensor, wav2: torch.Tensor, sr: int = 24000) -> torch.Tensor:
     """Compute PESQ score between two waveforms [B, T] or [B, 1, T]"""
     pesq_metric = PerceptualEvaluationSpeechQuality(fs=16000, mode="wb")
 
@@ -110,12 +110,13 @@ def pesq_score(self, wav1: torch.Tensor, wav2: torch.Tensor) -> torch.Tensor:
         if wav2.dim() == 3:
             wav2 = wav2.squeeze(1)
 
-        wav1 = torchaudio.functional.resample(wav1, self.sample_rate, 16000)
-        wav2 = torchaudio.functional.resample(wav2, self.sample_rate, 16000)
+        wav1 = torchaudio.functional.resample(wav1, sr, 16000)
+        wav2 = torchaudio.functional.resample(wav2, sr, 16000)
 
         return pesq_metric(wav1, wav2)
 
-    except Exception:
+    except Exception as e:
+        print(e)
         return torch.tensor(0.0, device=wav1.device)
 
 

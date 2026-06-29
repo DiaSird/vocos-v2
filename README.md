@@ -52,7 +52,7 @@ Default configuration:
 ## Installation
 
 ```bash
-git clone https://github.com/<user>/vocos-v2.git
+git clone https://github.com/DiaSird/vocos-v2.git
 cd vocos-v2
 
 python -m venv .venv
@@ -69,7 +69,11 @@ pip install -r requirements.txt
 Edit the configuration file and start training.
 
 ```bash
+# default
 python src/train.py fit --config configs/config_template.yaml
+
+# resume
+python ./src/train.py fit -c ./configs/config_template.yaml --ckpt_path ./checkpoints/last.ckpt
 ```
 
 The best checkpoint will be saved automatically.

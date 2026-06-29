@@ -71,6 +71,7 @@ def main():
 
         # ONNX inference
         mel = to_mel(wav)
+        mel = torch.log(torch.clamp(mel, min=1e-5))
         re, im = infer(session, mel)
 
         # ISTFT
@@ -78,7 +79,7 @@ def main():
 
         print(f"Input: {f}, Ref shape: {ref.shape}, Out shape: {out.shape}")
 
-        score = pesq_score(ref, out.cpu(), cfg.sr)
+        score = pesq_score(ref, out.cpu(), sr=cfg.sr)
         total += score
         print(f"{f}: PESQ={score:.4f}")
 

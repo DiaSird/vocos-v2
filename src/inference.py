@@ -68,6 +68,7 @@ def main():
         ref = wav.squeeze(0)
 
         mel = to_mel(wav).to(device)
+        mel = torch.log(torch.clamp(mel, min=1e-5))
 
         # Inference
         with torch.no_grad():
@@ -76,7 +77,7 @@ def main():
 
         print(f"Input: {f}, Ref shape: {ref.shape}, Out shape: {out.shape}")
 
-        score = pesq_score(ref, out.cpu(), cfg.sr)
+        score = pesq_score(ref, out.cpu(), sr=cfg.sr)
         total += score
         print(f"{f}: PESQ={score:.4f}")
 
