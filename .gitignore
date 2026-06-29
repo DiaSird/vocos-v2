@@ -1,5 +1,6 @@
 configs/config.yaml
 
+checkpoints/
 results/
 tests/
 lightning_logs/

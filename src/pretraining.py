@@ -4,11 +4,13 @@ import torch
 import torch.nn.functional as F
 import torchaudio
 import lightning as L
+from safetensors.torch import save_file
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality
 
 from src.model import Vocos
 from src.discriminator import Discriminator
+from finetuning import load_pretrained_vocos
 
 
 # -------------------------
@@ -44,6 +46,8 @@ class AudioPLModule(L.LightningModule):
         lambda_feat: float = 2.0,
         lambda_adv: float = 1.0,
         grad_clip: float = 1.0,
+        finetuning: bool = False,
+        finetune_path: str = "checkpoints/model.safetensors",
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["generator", "discriminator"])
@@ -60,7 +64,12 @@ class AudioPLModule(L.LightningModule):
         self.lambda_adv = lambda_adv
         self.grad_clip = grad_clip
 
-        self.model = generator if generator is not None else Vocos()
+        # Generator
+        if finetuning:
+            self.model = load_pretrained_vocos(finetune_path)
+        else:
+            self.model = generator if generator is not None else Vocos()
+
         self.disc = discriminator if discriminator is not None else Discriminator()
         self.automatic_optimization = False
 
@@ -160,20 +169,20 @@ class AudioPLModule(L.LightningModule):
         # ---- Discriminator step ----
         opt_d.zero_grad()
         r_out, f_out, _, _ = self.disc(wav, wav_fake_3d.detach())
+
         # r_out / f_out: list[disc] of list[sub_disc] of Tensor
         loss_d = sum(
             d_hinge_loss(r, f)
             for r_list, f_list in zip(r_out, f_out)
             for r, f in zip(r_list, f_list)
         )
+
         self.manual_backward(loss_d)
         self.clip_gradients(
             opt_d,
             gradient_clip_val=self.grad_clip,
             gradient_clip_algorithm="norm",
         )
-        opt_d.step()
-        sch_d.step()
 
         # ---- Generator step ----
         opt_g.zero_grad()
@@ -206,10 +215,16 @@ class AudioPLModule(L.LightningModule):
             gradient_clip_val=self.grad_clip,
             gradient_clip_algorithm="norm",
         )
-        opt_g.step()
-        sch_g.step()
 
-        train_pesq = self._pesq(wav_fake, wav)
+        opt_d.step()
+        opt_g.step()
+
+        if sch_d is not None:
+            sch_d.step()
+        if sch_g is not None:
+            sch_g.step()
+
+        train_pesq = self._pesq(wav_fake, wav).item()
 
         self.log_dict(
             {
@@ -269,7 +284,7 @@ class AudioPLModule(L.LightningModule):
             + self.lambda_mel * val_mel
         )
 
-        val_pesq = self._pesq(wav_fake, wav)
+        val_pesq = self._pesq(wav_fake, wav).item()
 
         self.log_dict(
             {
@@ -288,19 +303,22 @@ class AudioPLModule(L.LightningModule):
         return val_mel
 
     def on_train_start(self):
-        self.best_metric = float("inf")
+        self.best_metric = 0.0
 
-    def on_train_batch_end(self, outputs, batch, batch_idx):
-        # debug
-        # if self.global_step % 10 == 0:
-        #     torch.save(self.model.state_dict(), f"checkpoints/vocos_v2.pt")
-        pass
+    def on_train_batch_end(self, outputs, batch, batch_idx, debug=True):
+        train_pesq = self.trainer.callback_metrics.get("train/pesq")
+        is_update = train_pesq is not None and train_pesq > self.best_metric
+
+        if is_update:
+            self.best_metric = train_pesq
+
+        if debug and self.global_step % 100 == 0:
+            save_file(self.model.state_dict(), "checkpoints/vocos_v2.safetensors")
 
     def on_validation_epoch_end(self):
         val_pesq = self.trainer.callback_metrics.get("val/pesq")
-        if val_pesq is None:
-            return
+        is_update = val_pesq is not None and val_pesq > self.best_metric
 
-        if val_pesq < self.best_metric:
+        if is_update:
             self.best_metric = val_pesq
-            torch.save(self.model.state_dict(), "checkpoints/vocos_best.pt")
+            save_file(self.model.state_dict(), "checkpoints/vocos_v2.safetensors")

@@ -20,7 +20,8 @@ model:
       in_channels: 100
       channels: 512
       hidden_channels: 1536
-      out_channels: 1026 # 2 * (n_fft // 2 + 1) = 2 * 513
+      # 2 * (n_fft // 2 + 1) = 2 * 513
+      out_channels: 1026
       num_layers: 8
 
   discriminator:
@@ -38,12 +39,17 @@ model:
   lambda_adv: 1.0
   grad_clip: 1.0
 
+  # https://huggingface.co/hf-audio/vocos-mel-24khz
+  finetuning: false
+  finetune_path: "checkpoints/model.safetensors"
+
 trainer:
   max_steps: 200000 # 2000000
   precision: 16-mixed
-  log_every_n_steps: 10
+  log_every_n_steps: 200
   check_val_every_n_epoch: null
   val_check_interval: 10000
+
   callbacks:
     # Best model
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
@@ -61,5 +67,5 @@ trainer:
         dirpath: checkpoints/
         filename: last
         save_top_k: 1
-        every_n_train_steps: 10000
+        every_n_train_steps: 1000
         save_on_train_epoch_end: false

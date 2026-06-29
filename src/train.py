@@ -11,9 +11,6 @@ from src.dataloaders.datamodule import AudioDataModule
 from src.pretraining import AudioPLModule
 
 
-# -----------------------------
-# Logger factory
-# -----------------------------
 def create_logger(name: str):
     """Return Lightning logger."""
     if name == "mlflow":
@@ -24,9 +21,6 @@ def create_logger(name: str):
     return True  # default Lightning logger
 
 
-# -----------------------------
-# CLI
-# -----------------------------
 def cli_main():
     parser = argparse.ArgumentParser()
 

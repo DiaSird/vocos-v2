@@ -1,11 +1,11 @@
 --index-url https://download.pytorch.org/whl/cu128
 
 PyYAML
-triton
+safetensors
+triton # optional, for faster training on A100 GPUs
 torch
 torchaudio
 torchvision
-# torchcodec  # deps-torchaudio
 jsonargparse[signatures]
 lightning
 soundfile

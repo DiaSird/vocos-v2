@@ -67,7 +67,7 @@ class ConvNeXt1dV2(nn.Module):
 class Vocos(nn.Module):
     def __init__(
         self,
-        in_channels: int = 128,
+        in_channels: int = 100,
         channels: int = 512,
         hidden_channels: int = 1536,
         out_channels: int = 1026,
